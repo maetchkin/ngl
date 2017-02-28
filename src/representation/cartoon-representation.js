@@ -45,6 +45,9 @@ CartoonRepresentation.prototype = Object.assign( Object.create(
         },
         smoothSheet: {
             type: "boolean", rebuild: true
+        },
+        arrows: {
+            type: "boolean", rebuild: true
         }
 
     }, StructureRepresentation.prototype.parameters ),
@@ -61,6 +64,7 @@ CartoonRepresentation.prototype = Object.assign( Object.create(
         this.tension = defaults( p.tension, NaN );
         this.capped = defaults( p.capped, true );
         this.smoothSheet = defaults( p.smoothSheet, false );
+        this.arrows = defaults( p.arrows, false );
 
         StructureRepresentation.prototype.init.call( this, p );
 
@@ -80,6 +84,7 @@ CartoonRepresentation.prototype = Object.assign( Object.create(
     getSplineParams: function( params ){
 
         return Object.assign( {
+            arrows: this.arrows,
             subdiv: this.subdiv,
             tension: this.tension,
             directional: this.aspectRatio === 1.0 ? false : true,
@@ -106,6 +111,58 @@ CartoonRepresentation.prototype = Object.assign( Object.create(
 
     },
 
+    addArrows: function( subPos, subOri, subSize ){
+        var {subdiv, structure}         = this,
+            {residueStore}              = structure,
+            {sstruc, count}             = residueStore,
+            {position}                  = subPos,
+            {size}                      = subSize,
+            {normal, binormal, tangent} = subOri,
+            arrowWidth                  = 1.6,
+            subdivSize                  = 0,
+            subdivOffset                = 0,
+            sheets                      = [];
+
+        for (var i = 0; i < count; i++) {
+            subdivSize    = subdiv / ( (i === 0 || i === count - 1) ? 2 : 1 );
+            if ( i > 0 && sstruc[i] !== sstruc[i-1] ) {
+                if ( sstruc[i] > 0 ) {
+                    sheets.push({start:i, subdivSize, startSubdiv:subdivOffset})
+                } else {
+                    sheets[sheets.length - 1].end = i - 1;
+                    sheets[sheets.length - 1].endSubdiv = subdivOffset;
+                }
+            }
+            subdivOffset += subdivSize;
+        }
+
+        var shiftVec = (pos, offset = 1) =>
+                [position, normal, binormal, tangent].forEach(
+                    arr =>
+                        [0,1,2].forEach(
+                            c =>
+                                arr[pos*3 + c] = arr[(pos - offset)*3 + c]
+                        )
+                )
+
+        sheets.forEach(
+            ({endSubdiv, startSubdiv, subdivSize}) => {
+                //size[startSubdiv - 1] = 0.01;
+                var stepSizeInc = (size[subdivSize*2] / subdivSize)*arrowWidth;
+                for (var step = 0; step <= subdivSize; step++) {
+                    // sheet size
+                    size[startSubdiv + step - 1] = Math.max(step * stepSizeInc, 0.01);
+                    size[endSubdiv + step] = size[endSubdiv + subdivSize];
+                    if (step === subdivSize) {
+                        shiftVec( startSubdiv - 2,   -1 );
+                        shiftVec( startSubdiv + step );
+                        shiftVec( endSubdiv          );
+                    }
+                }
+            }
+        )
+    },
+
     createData: function( sview ){
 
         var bufferList = [];
@@ -122,6 +179,12 @@ CartoonRepresentation.prototype = Object.assign( Object.create(
             var subOri = spline.getSubdividedOrientation();
             var subCol = spline.getSubdividedColor( this.getColorParams() );
             var subSize = spline.getSubdividedSize( this.radius, this.getScale( polymer ) );
+
+            this.arrows && this.addArrows(
+                subPos,
+                subOri,
+                subSize
+            );
 
             bufferList.push(
                 new TubeMeshBuffer(
